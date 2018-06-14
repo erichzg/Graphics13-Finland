@@ -1,1 +1,3 @@
-# Graphics12-GiffordTheBigRedDog
+# Graphics13-Finland
+
+# Eric Zhang, Period 5
