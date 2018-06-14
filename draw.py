@@ -3,7 +3,7 @@ from matrix import *
 from math import *
 from gmath import *
 
-def scanline_convert(polygons, i, screen, zbuffer, color ):
+def scanline_convert(polygons, i, screen, zbuffer, view, ambient, lights, reflects, vertices ):
     flip = False
     BOT = 0
     TOP = 2
@@ -25,6 +25,13 @@ def scanline_convert(polygons, i, screen, zbuffer, color ):
     z1 = points[BOT][2]
     y = int(points[BOT][1])
 
+    #colors is a list of the colors of the 3 vertices, in order
+    colors = [[], [], []]
+    for i in range(3):
+        vertex_name = 'x' + str(points[i][0]) + 'y' + str(points[i][1])+ 'z' + str(points[i][2])
+        colors[i] = get_lighting(vertices[vertex_name], view, ambient, lights, reflects )
+
+
     distance0 = int(points[TOP][1]) - y * 1.0
     distance1 = int(points[MID][1]) - y * 1.0
     distance2 = int(points[TOP][1]) - int(points[MID][1]) * 1.0
@@ -34,15 +41,49 @@ def scanline_convert(polygons, i, screen, zbuffer, color ):
     dx1 = (points[MID][0] - points[BOT][0]) / distance1 if distance1 != 0 else 0
     dz1 = (points[MID][2] - points[BOT][2]) / distance1 if distance1 != 0 else 0
 
-    while y <= int(points[TOP][1]):
+    top_color_coeff = 0
+    top_num_steps = (int(points[TOP][1]) - y)
+    if top_num_steps == 0:
+        top_num_steps = 1
+    top_coeff_increment = 1.0 / top_num_steps
 
-        draw_line(int(x0), y, z0, int(x1), y, z1, screen, zbuffer, color)
+    mid_color_coeff = 0
+    mid_num_steps = (int(points[MID][1]) - y)
+    if mid_num_steps == 0:
+        mid_num_steps = 1
+    mid_coeff_increment = 1.0 / top_num_steps
+
+    mt_color_coeff = 0
+    mt_num_steps = (int(points[TOP][1]) - int(points[MID][1]))
+    if mt_num_steps == 0:
+        mt_num_steps = 1
+    mt_coeff_increment = 1.0 / mt_num_steps
+        
+    while y <= int(points[TOP][1]):
+        color1 = color2 = [0, 0, 0]
+        
+        for i in range(3):
+            color1[i] = int(top_color_coeff * colors[2][i] / 2.0 + (1 - top_color_coeff) * colors[0][i] / 2.0)
+            if flip:
+                color2[i] = int(mt_color_coeff * colors[2][i] / 2.0 + (1 - mt_color_coeff) * colors[1][i] / 2.0)
+            else:
+                color2[i] = int(mid_color_coeff * colors[1][i] / 2.0 + (1 - mid_color_coeff) * colors[0][i] / 2.0)
+
+                
+        limit_color(color1)
+        limit_color(color2)
+        draw_line(int(x0), y, z0, int(x1), y, z1, screen, zbuffer, color1, color2)
         x0+= dx0
         z0+= dz0
         x1+= dx1
         z1+= dz1
         y+= 1
-
+        top_color_coeff += top_coeff_increment
+        if flip:
+            mt_color_coeff += mt_coeff_increment
+        else:
+            mid_color_coeff += mid_coeff_increment
+        
         if ( not flip and y >= int(points[MID][1])):
             flip = True
 
@@ -56,19 +97,47 @@ def add_polygon( polygons, x0, y0, z0, x1, y1, z1, x2, y2, z2 ):
     add_point(polygons, x1, y1, z1);
     add_point(polygons, x2, y2, z2);
 
+def vertex_normals( matrix ):
+    #dict vertices: key is vertex, definition is set of normals
+    vertices = {}
+    point = 0
+    while point < len(matrix) - 2:
+        normal = calculate_normal(matrix, point)[:]
+        for vertex_num in range(3):
+            vertex_name = 'x' + str(matrix[point + vertex_num][0]) + 'y' + str(matrix[point + vertex_num][1])+ 'z' + str(matrix[point + vertex_num][2])
+            if vertex_name not in vertices:
+                vertices[vertex_name] = [normal]
+            else:
+                vertices[vertex_name].append(normal)
+        point += 3
+    
+    for vertex in vertices:
+        norms = vertices[vertex]
+        avg_norm = [0, 0, 0]
+        num_norms = len(norms)
+        for norm in norms:
+            if norm != [0, 0, 0]:
+                normalize(norm)
+            for i in range(3):
+                avg_norm[i] += 1.0 * norm[i] / num_norms
+        vertices[vertex] = avg_norm
+        #now the definitions of the vertices are the vertex normals
+    return vertices
+
+
 def draw_polygons( matrix, screen, zbuffer, view, ambient, lights, reflects ):
     if len(matrix) < 2:
         print 'Need at least 3 points to draw'
         return
 
+    vertices = vertex_normals(matrix)
     point = 0
     while point < len(matrix) - 2:
 
         normal = calculate_normal(matrix, point)[:]
         if dot_product(normal, view) > 0:
 
-            color = get_lighting(normal, view, ambient, lights, reflects )
-            scanline_convert(matrix, point, screen, zbuffer, color)
+            scanline_convert(matrix, point, screen, zbuffer, view, ambient, lights, reflects, vertices)
 
             # draw_line( int(matrix[point][0]),
             #            int(matrix[point][1]),
@@ -281,7 +350,7 @@ def draw_lines( matrix, screen, zbuffer, color ):
                    int(matrix[point+1][0]),
                    int(matrix[point+1][1]),
                    matrix[point+1][2],
-                   screen, zbuffer, color)
+                   screen, zbuffer, color, color)
         point+= 2
 
 def add_edge( matrix, x0, y0, z0, x1, y1, z1 ):
@@ -292,8 +361,9 @@ def add_point( matrix, x, y, z=0 ):
     matrix.append( [x, y, z, 1] )
 
 
-def draw_line( x0, y0, z0, x1, y1, z1, screen, zbuffer, color ):
-
+def draw_line( x0, y0, z0, x1, y1, z1, screen, zbuffer, color1, color2 ):
+    color = [0, 0, 0]
+    
     #swap points if going right -> left
     if x0 > x1:
         xt = x0
@@ -352,8 +422,11 @@ def draw_line( x0, y0, z0, x1, y1, z1, screen, zbuffer, color ):
             loop_end = y
 
     dz = (z1 - z0) / distance if distance != 0 else 0
-
+    loopStart = loop_start
     while ( loop_start < loop_end ):
+        color[0] =  int(1.0 * (loop_end - loop_start) / (loop_end - loopStart) * color1[0] + 1.0 * (loop_start - loopStart) / (loop_end - loopStart) * color2[0])
+        color[1] =  int(1.0 * (loop_end - loop_start) / (loop_end - loopStart) * color1[1] + 1.0 * (loop_start - loopStart) / (loop_end - loopStart) * color2[1])
+        color[2] =  int(1.0 * (loop_end - loop_start) / (loop_end - loopStart) * color1[2] + 1.0 * (loop_start - loopStart) / (loop_end - loopStart) * color2[2])
         plot( screen, zbuffer, color, x, y, z )
         if ( (wide and ((A > 0 and d > 0) or (A < 0 and d < 0))) or
              (tall and ((A > 0 and d < 0) or (A < 0 and d > 0 )))):
@@ -367,4 +440,4 @@ def draw_line( x0, y0, z0, x1, y1, z1, screen, zbuffer, color ):
             d+= d_east
         z+= dz
         loop_start+= 1
-    plot( screen, zbuffer, color, x, y, z )
+    plot( screen, zbuffer, color2, x, y, z )
