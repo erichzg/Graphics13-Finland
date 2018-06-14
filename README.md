@@ -1,7 +1,6 @@
 # Graphics13-Finland
 
-## Eric Zhang
-### Period 5
+## Eric Zhang (Period 5)
 
 ## New Features:
 ### Lighting: As many light sources as you need, whatever reflective properties you want for objects
